@@ -1,0 +1,216 @@
+
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+
+local enabled = false
+local collecting = false
+local lastMapCheck = 0
+
+-- کلمات کلیدی سکه
+local coinKeywords = {"coin", "token", "currency", "cash", "money", "event", "collect", "pickup", "gold", "robux", "prize"}
+
+-- ================= GUI =================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "FastCoinCollector"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local Main = Instance.new("Frame")
+Main.Size = UDim2.new(0, 280, 0, 140)
+Main.Position = UDim2.new(0.5, -140, 0.2, 0)
+Main.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+Main.BorderSizePixel = 0
+Main.Active = true
+Main.Parent = ScreenGui
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 36)
+Title.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+Title.Text = "🪙 Fast Coin Collector"
+Title.TextColor3 = Color3.fromRGB(255, 200, 80)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 15
+Title.Parent = Main
+Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 12)
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0.9, 0, 0, 38)
+ToggleBtn.Position = UDim2.new(0.05, 0, 0, 50)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
+ToggleBtn.Text = "Auto Collect: OFF"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.TextSize = 14
+ToggleBtn.Parent = Main
+Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 8)
+
+local Status = Instance.new("TextLabel")
+Status.Size = UDim2.new(0.9, 0, 0, 30)
+Status.Position = UDim2.new(0.05, 0, 0, 100)
+Status.BackgroundTransparency = 1
+Status.Text = "Waiting for new map..."
+Status.TextColor3 = Color3.fromRGB(180, 180, 180)
+Status.Font = Enum.Font.Gotham
+Status.TextSize = 13
+Status.Parent = Main
+
+-- Drag
+local dragging, dragStart, startPos
+Title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- ================= LOGIC =================
+local function getHRP()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    return char:FindFirstChild("HumanoidRootPart")
+end
+
+local function isCoin(obj)
+    if not (obj:IsA("BasePart") or obj:IsA("MeshPart") or obj:IsA("UnionOperation")) then
+        return false
+    end
+    local name = obj.Name:lower()
+    local parentName = obj.Parent and obj.Parent.Name:lower() or ""
+    for _, key in pairs(coinKeywords) do
+        if name:find(key) or parentName:find(key) then
+            return true
+        end
+    end
+    -- تشخیص تقریبی سکه‌های طلایی/نئونی کوچک
+    if obj.Size.Magnitude < 6 then
+        local color = obj.BrickColor.Name:lower()
+        if color:find("gold") or color:find("yellow") or color:find("neon") or obj.Material == Enum.Material.Neon then
+            return true
+        end
+    end
+    return false
+end
+
+local function findCoins()
+    local coins = {}
+    for _, obj in pairs(workspace:GetDescendants()) do
+        if isCoin(obj) then
+            table.insert(coins, obj)
+        end
+    end
+    return coins
+end
+
+local function collectCoins()
+    if collecting then return end
+    collecting = true
+
+    local hrp = getHRP()
+    if not hrp then
+        collecting = false
+        return
+    end
+
+    local originalCF = hrp.CFrame
+    local coins = findCoins()
+
+    if #coins == 0 then
+        Status.Text = "No coins found"
+        collecting = false
+        return
+    end
+
+    Status.Text = "Collecting " .. #coins .. " coins..."
+
+    -- خیلی سریع به سکه‌ها برو
+    for i, coin in ipairs(coins) do
+        if coin and coin.Parent then
+            hrp.CFrame = CFrame.new(coin.Position + Vector3.new(0, 3, 0))
+            -- یه تاچ کوچیک
+            firetouchinterest(hrp, coin, 0)
+            firetouchinterest(hrp, coin, 1)
+            task.wait(0.03) -- خیلی کم صبر کن
+        end
+    end
+
+    -- برگرد جای اول
+    hrp.CFrame = originalCF
+    hrp.AssemblyLinearVelocity = Vector3.zero
+
+    Status.Text = "Done! Collected " .. #coins
+    task.wait(1.2)
+    Status.Text = "Waiting for new map..."
+    collecting = false
+end
+
+-- تشخیص مپ جدید (ساده)
+local lastPartCount = 0
+RunService.Heartbeat:Connect(function()
+    if not enabled or collecting then return end
+    if tick() - lastMapCheck < 1.5 then return end
+    lastMapCheck = tick()
+
+    local currentCount = #workspace:GetDescendants()
+    -- اگه تعداد اشیاء مپ یهو زیاد شد = مپ جدید لود شده
+    if currentCount > lastPartCount + 80 then
+        task.wait(0.4) -- یه کم صبر کن تا سکه‌ها لود بشن
+        collectCoins()
+    end
+    lastPartCount = currentCount
+end)
+
+-- دکمه دستی هم بذاریم
+local ManualBtn = Instance.new("TextButton")
+ManualBtn.Size = UDim2.new(0.9, 0, 0, 28)
+ManualBtn.Position = UDim2.new(0.05, 0, 0, 145)
+ManualBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 160)
+ManualBtn.Text = "Collect Now"
+ManualBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ManualBtn.Font = Enum.Font.GothamBold
+ManualBtn.TextSize = 13
+ManualBtn.Parent = Main
+Instance.new("UICorner", ManualBtn).CornerRadius = UDim.new(0, 6)
+
+-- ارتفاع منو رو بیشتر کن
+Main.Size = UDim2.new(0, 280, 0, 185)
+
+ManualBtn.MouseButton1Click:Connect(function()
+    collectCoins()
+end)
+
+ToggleBtn.MouseButton1Click:Connect(function()
+    enabled = not enabled
+    if enabled then
+        ToggleBtn.Text = "Auto Collect: ON"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 70)
+        Status.Text = "Waiting for new map..."
+        lastPartCount = #workspace:GetDescendants()
+    else
+        ToggleBtn.Text = "Auto Collect: OFF"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
+        Status.Text = "Disabled"
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.K then
+        Main.Visible = not Main.Visible
+    end
+end)
+
+print("✅ Fast Coin Collector loaded")
